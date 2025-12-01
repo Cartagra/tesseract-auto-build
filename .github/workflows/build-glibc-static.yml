@@ -1,0 +1,157 @@
+name: Build Tesseract (fully static - glibc)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-glibc-static:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install host build tools
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y build-essential autoconf automake libtool pkg-config cmake ninja-build git wget bison flex python3 python3-pip texinfo pkg-config
+
+      - name: Prepare build dirs
+        run: |
+          export TOP=$RUNNER_TEMP/tess-static
+          rm -rf $TOP
+          mkdir -p $TOP/src $TOP/build $TOP/install
+          echo "TOP=$TOP" > $GITHUB_ENV
+          echo "PREFIX=$TOP/install" >> $GITHUB_ENV
+          echo "PKG_CONFIG_PATH=$TOP/install/lib/pkgconfig" >> $GITHUB_ENV
+
+      - name: Build zlib (static)
+        run: |
+          . $GITHUB_ENV
+          cd $TOP/src
+          wget -q https://zlib.net/zlib-1.3.tar.gz -O zlib.tar.gz
+          tar xf zlib.tar.gz
+          cd zlib-1.3
+          CFLAGS="-O2 -fPIC" ./configure --static --prefix=$PREFIX
+          make -j$(nproc)
+          make install
+
+      - name: Build libpng (static)
+        run: |
+          . $GITHUB_ENV
+          cd $TOP/src
+          wget -q https://download.sourceforge.net/libpng/libpng-1.6.44.tar.xz -O libpng.tar.xz
+          tar xf libpng.tar.xz
+          cd libpng-1.6.44
+          CPPFLAGS="-I$PREFIX/include" LDFLAGS="-L$PREFIX/lib" CFLAGS="-O2 -fPIC" ./configure --prefix=$PREFIX --enable-static --disable-shared
+          make -j$(nproc)
+          make install
+
+      - name: Build libjpeg-turbo (static)
+        run: |
+          . $GITHUB_ENV
+          cd $TOP/src
+          wget -q https://downloads.sourceforge.net/libjpeg-turbo/libjpeg-turbo-3.0.1.tar.gz -O libjpeg.tar.gz
+          tar xf libjpeg.tar.gz
+          cd libjpeg-turbo-3.0.1
+          mkdir -p build && cd build
+          cmake .. -DCMAKE_INSTALL_PREFIX=$PREFIX -DENABLE_SHARED=OFF -DENABLE_STATIC=ON -DCMAKE_POSITION_INDEPENDENT_CODE=ON
+          make -j$(nproc)
+          make install
+
+      - name: Build giflib (static)
+        run: |
+          . $GITHUB_ENV
+          cd $TOP/src
+          wget -q https://downloads.sourceforge.net/giflib/giflib-5.2.2.tar.gz -O giflib.tar.gz
+          tar xf giflib.tar.gz
+          cd giflib-5.2.2
+          ./configure --prefix=$PREFIX --enable-static --disable-shared CFLAGS="-O2 -fPIC" LDFLAGS="-L$PREFIX/lib" CPPFLAGS="-I$PREFIX/include"
+          make -j$(nproc)
+          make install
+
+      - name: Build libwebp (static)
+        run: |
+          . $GITHUB_ENV
+          cd $TOP/src
+          wget -q https://storage.googleapis.com/downloads.webmproject.org/releases/webp/libwebp-1.3.2.tar.gz -O libwebp.tar.gz
+          tar xf libwebp.tar.gz
+          cd libwebp-1.3.2
+          ./configure --prefix=$PREFIX --enable-static --disable-shared --disable-sharpyuv CFLAGS="-O2 -fPIC" LDFLAGS="-L$PREFIX/lib" CPPFLAGS="-I$PREFIX/include"
+          make -j$(nproc)
+          make install
+
+      - name: Build libtiff (static, disable optional compressors)
+        run: |
+          . $GITHUB_ENV
+          cd $TOP/src
+          wget -q https://download.osgeo.org/libtiff/tiff-4.6.0.tar.gz -O libtiff.tar.gz
+          tar xf libtiff.tar.gz
+          cd tiff-4.6.0
+          CPPFLAGS="-I$PREFIX/include" LDFLAGS="-L$PREFIX/lib" CFLAGS="-O2 -fPIC" ./configure --prefix=$PREFIX --enable-static --disable-shared --disable-lzma --disable-zstd
+          make -j$(nproc)
+          make install
+
+      - name: Build leptonica (static)
+        run: |
+          . $GITHUB_ENV
+          cd $TOP/src
+          wget -q https://github.com/DanBloomberg/leptonica/releases/download/1.86.0/leptonica-1.86.0.tar.gz -O leptonica.tar.gz
+          tar xf leptonica.tar.gz
+          cd leptonica-1.86.0
+          ./autogen.sh || true
+          PKG_CONFIG_PATH=$PREFIX/lib/pkgconfig \
+            CPPFLAGS="-I$PREFIX/include" LDFLAGS="-L$PREFIX/lib -static" \
+            ./configure --prefix=$PREFIX --enable-static --disable-shared \
+              --with-zlib --with-libpng --with-jpeg --with-libtiff --with-libwebp --with-giflib
+          make -j$(nproc)
+          make install
+
+      - name: Build tesseract (static)
+        run: |
+          . $GITHUB_ENV
+          cd $TOP/src
+          wget -q https://github.com/tesseract-ocr/tesseract/archive/refs/tags/5.5.1.tar.gz -O tesseract.tar.gz
+          tar xf tesseract.tar.gz
+          cd tesseract-5.5.1
+          ./autogen.sh
+          PKG_CONFIG_PATH=$PREFIX/lib/pkgconfig \
+            CPPFLAGS="-I$PREFIX/include" LDFLAGS="-L$PREFIX/lib -static" \
+            CFLAGS="-O2 -fPIC -static" \
+            CXXFLAGS="-O2 -fPIC -static -static-libstdc++ -static-libgcc" \
+            ./configure --prefix=$PREFIX --enable-static --disable-shared --disable-openmp --disable-curl --disable-graphics
+          make -j$(nproc)
+          make install
+
+      - name: Verify outputs
+        run: |
+          . $GITHUB_ENV
+          TESTBIN=$PREFIX/bin/tesseract
+          echo "file:"
+          file $TESTBIN || true
+          echo "readelf -l INTERP (should be none or point to ld-linux):"
+          readelf -l $TESTBIN | sed -n '1,120p' || true
+          echo "ldd (static should show 'not a dynamic executable' or minimal):"
+          ldd $TESTBIN || true
+          echo "version:"
+          $TESTBIN --version || true
+
+      - name: Strip / reduce size
+        run: |
+          . $GITHUB_ENV
+          if [ -f "$PREFIX/bin/tesseract" ]; then
+            strip --strip-all $PREFIX/bin/tesseract || true
+          fi
+
+      - name: Package artifact
+        run: |
+          . $GITHUB_ENV
+          mkdir -p $TOP/out
+          cp $PREFIX/bin/tesseract $TOP/out/
+          tar czvf tesseract-glibc-static.tar.gz -C $TOP/out .
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tesseract-glibc-static
+          path: tesseract-glibc-static.tar.gz
