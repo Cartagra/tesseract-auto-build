@@ -32,6 +32,9 @@ jobs:
           tar xzvf giflib-${GIFLIB_VERSION}.tar.gz
           cd giflib-${GIFLIB_VERSION}
 
+          # 修正：如果 autogen.sh 存在，则运行它来生成 configure 脚本
+          [ -f autogen.sh ] && sh autogen.sh
+          
           # 使用 Musl 交叉编译器进行编译 (使用全路径确保找到命令)
           CC="/usr/bin/x86_64-linux-musl-gcc" AR="/usr/bin/x86_64-linux-musl-ar" \
           ./configure --prefix=${MUSL_DEPS_ROOT} --host=${TARGET_HOST} --enable-static --disable-shared
