@@ -137,15 +137,14 @@ jobs:
       - name: Build & cache giflib
         id: giflib
         run: |
-          if [ ! -d "$PREFIX/giflib" ] || [ ! "$(ls -A $PREFIX/giflib)" ]; then
-            cd $RUNNER_TEMP
-            wget -q https://downloads.sourceforge.net/giflib/giflib-5.2.2.tar.gz -O giflib.tar.gz
-            tar xf giflib.tar.gz
-            cd giflib-5.2.2
-            mkdir -p $PREFIX/giflib
-            CC=$CC CFLAGS="$CFLAGS" ./configure --prefix=$PREFIX/giflib --enable-static --disable-shared
-            make -j$(nproc)
-            make install
+          cd $RUNNER_TEMP
+          wget -q https://downloads.sourceforge.net/giflib/giflib-5.2.2.tar.gz -O giflib.tar.gz
+          tar xf giflib.tar.gz
+          cd giflib-5.2.2
+          mkdir -p build && cd build
+          cmake .. -DCMAKE_INSTALL_PREFIX=$PREFIX/giflib -DBUILD_SHARED_LIBS=OFF
+          make -j$(nproc)
+          make install
 
       - name: Save giflib cache
         if: steps.giflib.outcome == 'success'
