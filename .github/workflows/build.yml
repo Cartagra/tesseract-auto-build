@@ -1,4 +1,4 @@
-name: Build Tesseract Static (GLIBC Compatible)
+name: Build Tesseract Static (musl)
 
 on:
   workflow_dispatch:
@@ -7,124 +7,84 @@ jobs:
   build:
     runs-on: ubuntu-latest
 
+    # 使用 Alpine（musl），这是最适合完全静态链接的环境
+    container: alpine:3.19
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install Base Toolchain (Ubuntu & Musl)
+      - name: Install build dependencies
         run: |
-          sudo apt-get update
-          # 安装基础工具和 Musl 交叉编译工具
-          sudo apt-get install -y build-essential autoconf automake libtool pkg-config \
-                               musl-tools wget tar libicu-dev autoconf-archive
-          
-          # 设置 Musl Cross-Compilation Environment
-          export TARGET_HOST="x86_64-linux-musl"
-          # 定义目标依赖的安装根目录
-          export MUSL_DEPS_ROOT="/opt/musl_deps"
-          mkdir -p ${MUSL_DEPS_ROOT}
+          apk update
+          apk add build-base autoconf automake libtool pkgconf git autoconf-archive \
+                 zlib-static zlib-dev \
+                 libpng-static libpng-dev \
+                 jpeg-dev \
+                 tiff-dev \
+                 libwebp-static libwebp-dev \
+                 giflib-static giflib-dev
 
-      - name: Build and Install giflib (Musl Target)
-        # 修复 'configure: No such file or directory' 错误
-        run: |
-          GIFLIB_VERSION="5.2.1"
-          TARBALL="giflib-${GIFLIB_VERSION}.tar.gz"
-          DIR="giflib-${GIFLIB_VERSION}"
-          
-          wget https://downloads.sourceforge.net/project/giflib/${TARBALL}
-          tar xzvf ${TARBALL}
-          
-          # 关键修正：确保进入正确的目录
-          if [ -d "$DIR" ]; then
-            cd "$DIR"
-          else
-            echo "Error: Directory $DIR not found after extraction."
-            exit 1
-          fi
-
-          # 调试信息：列出目录内容，确认 configure 脚本存在
-          echo "Current directory contents:"
-          ls -F
-          
-          # 使用 Musl 交叉编译器进行编译 (使用全路径确保找到命令)
-          CC="/usr/bin/x86_64-linux-musl-gcc" AR="/usr/bin/x86_64-linux-musl-ar" \
-          ./configure --prefix=${MUSL_DEPS_ROOT} --host=${TARGET_HOST} --enable-static --disable-shared
-          
-          make -j$(nproc)
-          make install
-
-      - name: Download and Build Leptonica (Static via CXX)
+      - name: Build Leptonica (static)
         run: |
           wget https://github.com/DanBloomberg/leptonica/releases/download/1.86.0/leptonica-1.86.0.tar.gz
           tar xzvf leptonica-1.86.0.tar.gz
           cd leptonica-1.86.0
-          
-          ./autogen.sh || true
-          
-          # 设置环境变量，指向 Musl 目标依赖的头文件和库
-          export MUSL_DEPS_ROOT="/opt/musl_deps"
-          export CFLAGS="-I${MUSL_DEPS_ROOT}/include"
-          export LDFLAGS="-L${MUSL_DEPS_ROOT}/lib -static"
 
-          # 配置 Leptonica (使用全路径的 CC/CXX)
-          CC="/usr/bin/x86_64-linux-musl-gcc" CXX="/usr/bin/x86_64-linux-musl-g++" \
-          ./configure --prefix=/usr/local \
-            --host=${TARGET_HOST} \
-            --enable-static --disable-shared \
-            --with-zlib --with-libpng --with-jpeg --with-libtiff --with-giflib \
-            --with-libwebp=no
-          
+          ./autogen.sh || true
+
+          ./configure \
+            --prefix=/usr/local \
+            --enable-static \
+            --disable-shared \
+            --with-zlib --with-libpng --with-jpeg --with-libtiff --with-libwebp --with-giflib
+
           make -j$(nproc)
           make install
 
-      - name: Download and Build Tesseract (Static via CXX)
+      - name: Build Tesseract (fully static)
         run: |
-          wget https://github.com/tesseract-ocr/tesseract/archive/refs/tags/5.5.1.tar.gz -O tesseract-5.5.1.tar.gz
-          tar xzvf tesseract-5.5.1.tar.gz
+          wget https://github.com/tesseract-ocr/tesseract/archive/refs/tags/5.5.1.tar.gz -O tesseract.tar.gz
+          tar xf tesseract.tar.gz
           cd tesseract-5.5.1
 
           ./autogen.sh
 
-          # 设置 PKG_CONFIG_PATH，以找到 Leptonica 
           export PKG_CONFIG_PATH=/usr/local/lib/pkgconfig
-          
-          # 继承 MUSL DEPS 路径
-          export MUSL_DEPS_ROOT="/opt/musl_deps"
-          
-          # 核心配置：使用 Musl 工具链和静态链接
-          CC="/usr/bin/x86_64-linux-musl-gcc" CXX="/usr/bin/x86_64-linux-musl-g++" \
-          ./configure --prefix=/usr/local \
-            --host=${TARGET_HOST} \
-            --enable-static --disable-shared \
+
+          ./configure \
+            --prefix=/usr/local \
+            --enable-static \
+            --disable-shared \
             --disable-openmp \
             --disable-curl \
             --disable-graphics \
-            # Explicitly pointing C++ flags to force static linking of standard library
-            CXXFLAGS="-static -static-libstdc++ -I${MUSL_DEPS_ROOT}/include" \
-            LDFLAGS="-static -static-libstdc++ -L${MUSL_DEPS_ROOT}/lib"
+            CFLAGS="-static" \
+            CXXFLAGS="-static -static-libstdc++ -static-libgcc" \
+            LDFLAGS="-static -static-libstdc++ -static-libgcc"
 
           make -j$(nproc)
           make install
 
-      - name: Verify Static Binary
+      - name: Verify static binary
         run: |
-          echo "Checking binary type..."
+          echo "Binary info:"
           file /usr/local/bin/tesseract
-          
-          echo "Checking version..."
-          /usr/local/bin/tesseract --version
-          
-          echo "Checking library dependencies (should be empty for static)..."
-          ldd /usr/local/bin/tesseract || echo "Result: Not a dynamic executable (Success)"
 
-      - name: Package result
+          echo "Tesseract version:"
+          /usr/local/bin/tesseract --version
+
+          echo "Check dynamic dependencies (should be none):"
+          ldd /usr/local/bin/tesseract || echo "Static binary confirmed"
+
+      - name: Package output
         run: |
           mkdir output
           cp /usr/local/bin/tesseract output/
-          tar czvf tesseract-static-glibc-compatible.tar.gz -C output .
+          tar czvf tesseract-musl-static.tar.gz -C output .
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: tesseract-static-glibc-compatible
-          path: tesseract-static-glibc-compatible.tar.gz
+          name: tesseract-musl-static
+          path: tesseract-musl-static.tar.gz
