@@ -50,30 +50,27 @@ jobs:
         run: |
           echo "$PREFIX/bin" >> $GITHUB_PATH
           echo "PKG_CONFIG_PATH=$PREFIX/lib/pkgconfig" >> $GITHUB_ENV
-          echo "CC=x86_64-linux-musl-gcc" >> $GITHUB_ENV
-          echo "CXX=x86_64-linux-musl-g++" >> $GITHUB_ENV
-          echo "AR=x86_64-linux-musl-ar" >> $GITHUB_ENV
-          echo "RANLIB=x86_64-linux-musl-ranlib" >> $GITHUB_ENV
-          echo "STRIP=x86_64-linux-musl-strip" >> $GITHUB_ENV
+          export CC=x86_64-linux-musl-gcc
+          export CXX=x86_64-linux-musl-g++
+          export AR=x86_64-linux-musl-ar
+          export RANLIB=x86_64-linux-musl-ranlib
+          export STRIP=x86_64-linux-musl-strip
+          export CFLAGS="-O2 -pipe -static -Wno-error"
+          export CXXFLAGS="-O2 -pipe -static -Wno-error -static-libstdc++ -static-libgcc"
           mkdir -p $PREFIX/{include,lib,bin}
 
       # ------------------ Function to build & cache dependency ------------------
+      # Zlib
       - name: Build & cache zlib
         id: zlib
         run: |
-          cache_hit=false
-          echo "Trying to restore cache for zlib..."
-          if [ -d "$PREFIX/zlib" ] && [ "$(ls -A $PREFIX/zlib)" ]; then
-            echo "Cache hit"
-            cache_hit=true
-          fi
-          if [ "$cache_hit" = false ]; then
+          if [ ! -d "$PREFIX/zlib" ] || [ ! "$(ls -A $PREFIX/zlib)" ]; then
             cd $RUNNER_TEMP
             wget -q https://zlib.net/zlib-1.3.1.tar.gz -O zlib.tar.gz
             tar xf zlib.tar.gz
             cd zlib-1.3.1
             mkdir -p $PREFIX/zlib
-            CC=x86_64-linux-musl-gcc ./configure --static --prefix=$PREFIX/zlib
+            CC=$CC CFLAGS="$CFLAGS" ./configure --static --prefix=$PREFIX/zlib
             make -j$(nproc)
             make install
           fi
@@ -85,22 +82,17 @@ jobs:
           path: $PREFIX/zlib
           key: zlib-1.3.1-${{ runner.os }}-v1
 
-      # ------------------ Repeat similar pattern for other deps ------------------
-      # libpng
+      # Libpng
       - name: Build & cache libpng
         id: libpng
         run: |
-          cache_hit=false
-          if [ -d "$PREFIX/libpng" ] && [ "$(ls -A $PREFIX/libpng)" ]; then
-            cache_hit=true
-          fi
-          if [ "$cache_hit" = false ]; then
+          if [ ! -d "$PREFIX/libpng" ] || [ ! "$(ls -A $PREFIX/libpng)" ]; then
             cd $RUNNER_TEMP
             wget -q https://download.sourceforge.net/libpng/libpng-1.6.44.tar.xz -O libpng.tar.xz
             tar xf libpng.tar.xz
             cd libpng-1.6.44
             mkdir -p $PREFIX/libpng
-            CC=x86_64-linux-musl-gcc ./configure --host=x86_64-linux-musl --prefix=$PREFIX/libpng --enable-static --disable-shared
+            CC=$CC CFLAGS="$CFLAGS" ./configure --host=x86_64-linux-musl --prefix=$PREFIX/libpng --enable-static --disable-shared
             make -j$(nproc)
             make install
           fi
@@ -112,21 +104,17 @@ jobs:
           path: $PREFIX/libpng
           key: libpng-1.6.44-${{ runner.os }}-v1
 
-      # libjpeg-turbo
+      # Libjpeg-turbo
       - name: Build & cache libjpeg
         id: libjpeg
         run: |
-          cache_hit=false
-          if [ -d "$PREFIX/libjpeg" ] && [ "$(ls -A $PREFIX/libjpeg)" ]; then
-            cache_hit=true
-          fi
-          if [ "$cache_hit" = false ]; then
+          if [ ! -d "$PREFIX/libjpeg" ] || [ ! "$(ls -A $PREFIX/libjpeg)" ]; then
             cd $RUNNER_TEMP
             wget -q https://downloads.sourceforge.net/libjpeg-turbo/libjpeg-turbo-3.0.1.tar.gz -O libjpeg.tar.gz
             tar xf libjpeg.tar.gz
             cd libjpeg-turbo-3.0.1
             mkdir build && cd build
-            CC=x86_64-linux-musl-gcc CXX=x86_64-linux-musl-g++ cmake .. -DCMAKE_INSTALL_PREFIX=$PREFIX/libjpeg -DENABLE_SHARED=FALSE -DENABLE_STATIC=TRUE -DCMAKE_BUILD_TYPE=Release
+            CC=$CC CXX=$CXX CFLAGS="$CFLAGS" CXXFLAGS="$CXXFLAGS" cmake .. -DCMAKE_INSTALL_PREFIX=$PREFIX/libjpeg -DENABLE_SHARED=FALSE -DENABLE_STATIC=TRUE -DCMAKE_BUILD_TYPE=Release
             make -j$(nproc)
             make install
           fi
@@ -142,17 +130,13 @@ jobs:
       - name: Build & cache giflib
         id: giflib
         run: |
-          cache_hit=false
-          if [ -d "$PREFIX/giflib" ] && [ "$(ls -A $PREFIX/giflib)" ]; then
-            cache_hit=true
-          fi
-          if [ "$cache_hit" = false ]; then
+          if [ ! -d "$PREFIX/giflib" ] || [ ! "$(ls -A $PREFIX/giflib)" ]; then
             cd $RUNNER_TEMP
             wget -q https://downloads.sourceforge.net/giflib/giflib-5.2.2.tar.gz -O giflib.tar.gz
             tar xf giflib.tar.gz
             cd giflib-5.2.2
             mkdir -p $PREFIX/giflib
-            CC=x86_64-linux-musl-gcc ./configure --prefix=$PREFIX/giflib --enable-static --disable-shared
+            CC=$CC CFLAGS="$CFLAGS" ./configure --prefix=$PREFIX/giflib --enable-static --disable-shared
             make -j$(nproc)
             make install
           fi
@@ -164,21 +148,17 @@ jobs:
           path: $PREFIX/giflib
           key: giflib-5.2.2-${{ runner.os }}-v1
 
-      # libwebp
+      # Libwebp
       - name: Build & cache libwebp
         id: libwebp
         run: |
-          cache_hit=false
-          if [ -d "$PREFIX/libwebp" ] && [ "$(ls -A $PREFIX/libwebp)" ]; then
-            cache_hit=true
-          fi
-          if [ "$cache_hit" = false ]; then
+          if [ ! -d "$PREFIX/libwebp" ] || [ ! "$(ls -A $PREFIX/libwebp)" ]; then
             cd $RUNNER_TEMP
             wget -q https://storage.googleapis.com/downloads.webmproject.org/releases/webp/libwebp-1.3.2.tar.gz -O libwebp.tar.gz
             tar xf libwebp.tar.gz
             cd libwebp-1.3.2
             mkdir -p $PREFIX/libwebp
-            ./configure --host=x86_64-linux-musl --prefix=$PREFIX/libwebp --enable-static --disable-shared --disable-sharpyuv
+            CC=$CC CFLAGS="$CFLAGS" ./configure --host=x86_64-linux-musl --prefix=$PREFIX/libwebp --enable-static --disable-shared --disable-sharpyuv
             make -j$(nproc)
             make install
           fi
@@ -190,21 +170,17 @@ jobs:
           path: $PREFIX/libwebp
           key: libwebp-1.3.2-${{ runner.os }}-v1
 
-      # libtiff
+      # Libtiff
       - name: Build & cache libtiff
         id: libtiff
         run: |
-          cache_hit=false
-          if [ -d "$PREFIX/libtiff" ] && [ "$(ls -A $PREFIX/libtiff)" ]; then
-            cache_hit=true
-          fi
-          if [ "$cache_hit" = false ]; then
+          if [ ! -d "$PREFIX/libtiff" ] || [ ! "$(ls -A $PREFIX/libtiff)" ]; then
             cd $RUNNER_TEMP
             wget -q https://download.osgeo.org/libtiff/tiff-4.6.0.tar.gz -O libtiff.tar.gz
             tar xf libtiff.tar.gz
             cd tiff-4.6.0
             mkdir -p $PREFIX/libtiff
-            CC=x86_64-linux-musl-gcc ./configure --host=x86_64-linux-musl --prefix=$PREFIX/libtiff --enable-static --disable-shared --disable-lzma --disable-zstd
+            CC=$CC CFLAGS="$CFLAGS" ./configure --host=x86_64-linux-musl --prefix=$PREFIX/libtiff --enable-static --disable-shared --disable-lzma --disable-zstd
             make -j$(nproc)
             make install
           fi
@@ -224,7 +200,7 @@ jobs:
           tar xf leptonica.tar.gz
           cd leptonica-1.86.0
           ./autogen.sh || true
-          CC=x86_64-linux-musl-gcc CXX=x86_64-linux-musl-g++ \
+          CC=$CC CXX=$CXX CFLAGS="$CFLAGS" CXXFLAGS="$CXXFLAGS" \
             CPPFLAGS="-I$PREFIX/include -I$PREFIX/zlib/include -I$PREFIX/libpng/include -I$PREFIX/libjpeg/include -I$PREFIX/libtiff/include -I$PREFIX/libwebp/include -I$PREFIX/giflib/include" \
             LDFLAGS="-L$PREFIX/lib -L$PREFIX/zlib/lib -L$PREFIX/libpng/lib -L$PREFIX/libjpeg/lib -L$PREFIX/libtiff/lib -L$PREFIX/libwebp/lib -L$PREFIX/giflib/lib -static" \
             ./configure --host=x86_64-linux-musl --prefix=$PREFIX --enable-static --disable-shared \
@@ -240,11 +216,9 @@ jobs:
           tar xf tesseract.tar.gz
           cd tesseract-5.5.1
           ./autogen.sh
-          CC=x86_64-linux-musl-gcc CXX=x86_64-linux-musl-g++ \
+          CC=$CC CXX=$CXX CFLAGS="$CFLAGS" CXXFLAGS="$CXXFLAGS" \
             CPPFLAGS="-I$PREFIX/include -I$PREFIX/zlib/include -I$PREFIX/libpng/include -I$PREFIX/libjpeg/include -I$PREFIX/libtiff/include -I$PREFIX/libwebp/include -I$PREFIX/giflib/include" \
             LDFLAGS="-L$PREFIX/lib -L$PREFIX/zlib/lib -L$PREFIX/libpng/lib -L$PREFIX/libjpeg/lib -L$PREFIX/libtiff/lib -L$PREFIX/libwebp/lib -L$PREFIX/giflib/lib -static" \
-            CFLAGS="-O2 -pipe -static" \
-            CXXFLAGS="-O2 -pipe -static -static-libstdc++ -static-libgcc" \
             ./configure --host=x86_64-linux-musl --prefix=$PREFIX --enable-static --disable-shared \
               --disable-openmp --disable-curl --disable-graphics
           make -j$(nproc)
@@ -253,7 +227,7 @@ jobs:
       # ------------------ Strip & verify ------------------
       - name: Strip and verify binary
         run: |
-          $PREFIX/bin/x86_64-linux-musl-strip $PREFIX/bin/tesseract || true
+          $STRIP $PREFIX/bin/tesseract || true
           echo "file:"
           file $PREFIX/bin/tesseract
           echo "readelf -l INTERP (should be none):"
