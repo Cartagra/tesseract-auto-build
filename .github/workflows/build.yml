@@ -26,10 +26,10 @@ jobs:
         id: cache-musl
         uses: actions/cache@v3
         with:
-          path:
-            - $PREFIX/bin
-            - $PREFIX/lib
-            - $PREFIX/include
+          path: |
+            $PREFIX/bin
+            $PREFIX/lib
+            $PREFIX/include
           key: musl-cross-make-${{ runner.os }}-v1
           fail-on-cache-miss: false
 
@@ -49,10 +49,10 @@ jobs:
         if: steps.cache-musl.outputs.cache-hit != 'true'
         uses: actions/cache@v3
         with:
-          path:
-            - $PREFIX/bin
-            - $PREFIX/lib
-            - $PREFIX/include
+          path: |
+            $PREFIX/bin
+            $PREFIX/lib
+            $PREFIX/include
           key: musl-cross-make-${{ runner.os }}-v1
 
       - name: Setup environment
@@ -68,7 +68,7 @@ jobs:
           export CXXFLAGS="-O2 -pipe -static -Wno-error -static-libstdc++ -static-libgcc"
           mkdir -p $PREFIX/{include,lib,bin}
 
-      # ------------------ Function to build & cache dependencies ------------------
+      # ------------------ Function to build & cache dependencies ------------------  
 
       # Zlib
       - name: Build & cache zlib
