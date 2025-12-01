@@ -1,88 +1,173 @@
-name: Build Tesseract Static (musl)
+name: Build Tesseract (fully static musl)
 
 on:
   workflow_dispatch:
 
 jobs:
-  build:
+  build-static-musl:
     runs-on: ubuntu-latest
-
-    # 使用 Alpine（musl），这是最适合完全静态链接的环境
-    container: alpine:3.19
+    timeout-minutes: 120
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install build dependencies
+      - name: Install host packages
         run: |
-          apk update
-          apk add build-base autoconf automake libtool pkgconf git autoconf-archive \
-                 zlib-static zlib-dev \
-                 libpng-static libpng-dev \
-                 jpeg-dev \
-                 tiff-dev \
-                 libwebp-static libwebp-dev \
-                 giflib-static giflib-dev
+          sudo apt-get update -y
+          sudo apt-get install -y build-essential git wget ca-certificates autoconf automake libtool pkg-config bison flex python3 python3-pip meson ninja-build \
+            gawk texinfo libxml2-utils help2man
+
+      - name: Build musl cross toolchain (musl-cross-make)
+        run: |
+          # Build x86_64-linux-musl cross-compiler to install under /usr/local/musl
+          git clone https://github.com/richfelker/musl-cross-make.git /tmp/musl-cross-make
+          cd /tmp/musl-cross-make
+          # Use default TARGET=x86_64-linux-musl
+          make TARGET=x86_64-linux-musl -j$(nproc)
+          sudo make install TARGET=x86_64-linux-musl PREFIX=/usr/local/musl
+          # Add toolchain to PATH
+          echo "##[endgroup]"
+
+      - name: Setup environment for musl toolchain
+        run: |
+          export TOOLCHAIN_PREFIX=x86_64-linux-musl
+          export PREFIX=/usr/local/musl
+          echo "TOOLCHAIN_PREFIX=$TOOLCHAIN_PREFIX" >> $GITHUB_ENV
+          echo "PREFIX=$PREFIX" >> $GITHUB_ENV
+          echo "/usr/local/musl/bin" >> $GITHUB_PATH
+
+      - name: Create staging dirs for static libs
+        run: |
+          mkdir -p /usr/local/musl/{include,lib,bin}
+          # pkg-config path for our static libs
+          echo "/usr/local/musl/lib/pkgconfig" > /tmp/pkgconf-path
+          echo "PKG_CONFIG_PATH=/usr/local/musl/lib/pkgconfig" >> $GITHUB_ENV
+
+      - name: Build zlib (static)
+        run: |
+          cd $RUNNER_TEMP
+          wget -q https://zlib.net/zlib-1.3.tar.gz -O zlib.tar.gz
+          tar xf zlib.tar.gz
+          cd zlib-1.3
+          CC=x86_64-linux-musl-gcc ./configure --static --prefix=/usr/local/musl
+          make -j$(nproc)
+          sudo make install
+
+      - name: Build libpng (static)
+        run: |
+          cd $RUNNER_TEMP
+          wget -q https://download.sourceforge.net/libpng/libpng-1.6.44.tar.xz -O libpng.tar.xz
+          tar xf libpng.tar.xz
+          cd libpng-1.6.44
+          CC=x86_64-linux-musl-gcc ./configure --host=x86_64-linux-musl --prefix=/usr/local/musl --enable-static --disable-shared
+          make -j$(nproc)
+          sudo make install
+
+      - name: Build libjpeg-turbo (static)
+        run: |
+          cd $RUNNER_TEMP
+          wget -q https://downloads.sourceforge.net/libjpeg-turbo/libjpeg-turbo-3.0.1.tar.gz -O libjpeg.tar.gz
+          tar xf libjpeg.tar.gz
+          cd libjpeg-turbo-3.0.1
+          mkdir build && cd build
+          CC=x86_64-linux-musl-gcc CXX=x86_64-linux-musl-g++ cmake .. -DCMAKE_INSTALL_PREFIX=/usr/local/musl -DENABLE_SHARED=FALSE -DENABLE_STATIC=TRUE -DCMAKE_BUILD_TYPE=Release
+          make -j$(nproc)
+          sudo make install
+
+      - name: Build giflib (static)
+        run: |
+          cd $RUNNER_TEMP
+          wget -q https://downloads.sourceforge.net/giflib/giflib-5.2.2.tar.gz -O giflib.tar.gz
+          tar xf giflib.tar.gz
+          cd giflib-5.2.2
+          CC=x86_64-linux-musl-gcc ./configure --prefix=/usr/local/musl --enable-static --disable-shared
+          make -j$(nproc)
+          sudo make install
+
+      - name: Build libwebp (static, disable sharpyuv)
+        run: |
+          cd $RUNNER_TEMP
+          wget -q https://storage.googleapis.com/downloads.webmproject.org/releases/webp/libwebp-1.3.2.tar.gz -O libwebp.tar.gz
+          tar xf libwebp.tar.gz
+          cd libwebp-1.3.2
+          ./configure --host=x86_64-linux-musl --prefix=/usr/local/musl --enable-static --disable-shared --disable-sharpyuv
+          make -j$(nproc)
+          sudo make install
+
+      - name: Build libtiff (static, avoid optional deps)
+        run: |
+          cd $RUNNER_TEMP
+          wget -q https://download.osgeo.org/libtiff/tiff-4.6.0.tar.gz -O libtiff.tar.gz
+          tar xf libtiff.tar.gz
+          cd tiff-4.6.0
+          # disable optional compressors that pull extra dynamic deps (lzma, zstd) if possible
+          CC=x86_64-linux-musl-gcc ./configure --host=x86_64-linux-musl --prefix=/usr/local/musl --enable-static --disable-shared --disable-lzma --disable-zstd
+          make -j$(nproc)
+          sudo make install
+
+      - name: Export build env for later libs
+        run: |
+          echo "CC=x86_64-linux-musl-gcc" >> $GITHUB_ENV
+          echo "CXX=x86_64-linux-musl-g++" >> $GITHUB_ENV
+          echo "AR=x86_64-linux-musl-ar" >> $GITHUB_ENV
+          echo "RANLIB=x86_64-linux-musl-ranlib" >> $GITHUB_ENV
+          echo "STRIP=x86_64-linux-musl-strip" >> $GITHUB_ENV
+          # Ensure pkg-config can find our .pc files
+          echo "PKG_CONFIG_PATH=/usr/local/musl/lib/pkgconfig" >> $GITHUB_ENV
+          export PKG_CONFIG_PATH=/usr/local/musl/lib/pkgconfig
 
       - name: Build Leptonica (static)
         run: |
-          wget https://github.com/DanBloomberg/leptonica/releases/download/1.86.0/leptonica-1.86.0.tar.gz
-          tar xzvf leptonica-1.86.0.tar.gz
+          cd $RUNNER_TEMP
+          wget -q https://github.com/DanBloomberg/leptonica/releases/download/1.86.0/leptonica-1.86.0.tar.gz -O leptonica.tar.gz
+          tar xf leptonica.tar.gz
           cd leptonica-1.86.0
-
           ./autogen.sh || true
-
-          ./configure \
-            --prefix=/usr/local \
-            --enable-static \
-            --disable-shared \
-            --with-zlib --with-libpng --with-jpeg --with-libtiff --with-libwebp --with-giflib
-
+          CC=x86_64-linux-musl-gcc CXX=x86_64-linux-musl-g++ \
+            CPPFLAGS="-I/usr/local/musl/include" \
+            LDFLAGS="-L/usr/local/musl/lib -static" \
+            ./configure --host=x86_64-linux-musl --prefix=/usr/local/musl --enable-static --disable-shared \
+              --with-zlib --with-libpng --with-jpeg --with-libtiff --with-libwebp --with-giflib
           make -j$(nproc)
-          make install
+          sudo make install
 
-      - name: Build Tesseract (fully static)
+      - name: Build Tesseract (static)
         run: |
-          wget https://github.com/tesseract-ocr/tesseract/archive/refs/tags/5.5.1.tar.gz -O tesseract.tar.gz
+          cd $RUNNER_TEMP
+          wget -q https://github.com/tesseract-ocr/tesseract/archive/refs/tags/5.5.1.tar.gz -O tesseract.tar.gz
           tar xf tesseract.tar.gz
           cd tesseract-5.5.1
-
           ./autogen.sh
-
-          export PKG_CONFIG_PATH=/usr/local/lib/pkgconfig
-
-          ./configure \
-            --prefix=/usr/local \
-            --enable-static \
-            --disable-shared \
-            --disable-openmp \
-            --disable-curl \
-            --disable-graphics \
-            CFLAGS="-static" \
-            CXXFLAGS="-static -static-libstdc++ -static-libgcc" \
-            LDFLAGS="-static -static-libstdc++ -static-libgcc"
-
+          export PKG_CONFIG_PATH=/usr/local/musl/lib/pkgconfig
+          CC=x86_64-linux-musl-gcc CXX=x86_64-linux-musl-g++ \
+            CPPFLAGS="-I/usr/local/musl/include" \
+            LDFLAGS="-L/usr/local/musl/lib -static" \
+            CFLAGS="-O2 -pipe -static" \
+            CXXFLAGS="-O2 -pipe -static -static-libstdc++ -static-libgcc" \
+            ./configure --host=x86_64-linux-musl --prefix=/usr/local/musl --enable-static --disable-shared \
+              --disable-openmp --disable-curl --disable-graphics
           make -j$(nproc)
-          make install
+          sudo make install
 
-      - name: Verify static binary
+      - name: Strip and verify binary
         run: |
-          echo "Binary info:"
-          file /usr/local/bin/tesseract
+          /usr/local/musl/bin/x86_64-linux-musl-strip /usr/local/musl/bin/tesseract || true
+          echo "file:"
+          file /usr/local/musl/bin/tesseract
+          echo "readelf -l INTERP (should be none):"
+          readelf -l /usr/local/musl/bin/tesseract | sed -n '1,120p'
+          echo "ldd (should say not a dynamic executable):"
+          ldd /usr/local/musl/bin/tesseract || true
+          echo "tesseract --version:"
+          /usr/local/musl/bin/tesseract --version || true
 
-          echo "Tesseract version:"
-          /usr/local/bin/tesseract --version
-
-          echo "Check dynamic dependencies (should be none):"
-          ldd /usr/local/bin/tesseract || echo "Static binary confirmed"
-
-      - name: Package output
+      - name: Package artifact
         run: |
-          mkdir output
-          cp /usr/local/bin/tesseract output/
+          mkdir -p output
+          cp /usr/local/musl/bin/tesseract output/
+          # Optionally include a minimal tessdata (user can add real models)
           tar czvf tesseract-musl-static.tar.gz -C output .
-
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
