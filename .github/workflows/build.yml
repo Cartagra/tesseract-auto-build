@@ -46,7 +46,7 @@ jobs:
           tar czvf tesseract-static.tar.gz -C /usr/local/tesseract-static .
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: tesseract-static
           path: tesseract-static.tar.gz
