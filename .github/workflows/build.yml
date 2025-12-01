@@ -1,52 +1,78 @@
-name: Build Tesseract Static
+name: Build Tesseract Static (Alpine)
 
-# 只允许手动触发
 on:
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    # 关键修改：使用 Alpine 容器，它原生基于 musl，构建静态文件非常容易
+    container: alpine:3.19
+
     steps:
       - name: Checkout
-        uses: actions/checkout@v4   # 最新 checkout action
+        uses: actions/checkout@v4
 
       - name: Install dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential autoconf automake libtool pkg-config musl-tools wget tar
+          apk update
+          # 安装编译工具和 autogen 必须的工具
+          apk add build-base autoconf automake libtool pkgconf git autoconf-archive
+          # 安装图片库的静态版本 (重要：否则无法读取 png/jpg)
+          apk add zlib-static libpng-static jpeg-dev tiff-dev 
+          # 注意：jpeg-dev 和 tiff-dev 在 Alpine 中通常包含静态库，或者需要寻找对应的 -static 包
 
-      - name: Download Leptonica 1.86.0
+      - name: Download and Build Leptonica
         run: |
           wget https://github.com/DanBloomberg/leptonica/releases/download/1.86.0/leptonica-1.86.0.tar.gz
           tar xzvf leptonica-1.86.0.tar.gz
-
-      - name: Build Leptonica (static)
-        run: |
           cd leptonica-1.86.0
-          CC=musl-gcc ./configure --prefix=/usr/local/leptonica-static --enable-static --disable-shared
-          make -j$(nproc) && make install
+          
+          # 即使是 release 包，有时也建议重新生成 configure
+          ./configure --prefix=/usr/local --enable-static --disable-shared --with-zlib --with-libpng --with-jpeg --with-libtiff
+          make -j$(nproc)
+          make install
 
-      - name: Download Tesseract 5.5.1
+      - name: Download and Build Tesseract
         run: |
           wget https://github.com/tesseract-ocr/tesseract/archive/refs/tags/5.5.1.tar.gz -O tesseract-5.5.1.tar.gz
           tar xzvf tesseract-5.5.1.tar.gz
-
-      - name: Build Tesseract (static)
-        run: |
           cd tesseract-5.5.1
-          CC=musl-gcc ./configure --prefix=/usr/local/tesseract-static \
+
+          # 必须步骤：生成 configure 脚本
+          ./autogen.sh
+
+          # 配置：
+          # LDFLAGS="-static" 强制生成完全静态的二进制文件
+          # PKG_CONFIG_PATH 确保能找到刚才安装的 leptonica
+          export PKG_CONFIG_PATH=/usr/local/lib/pkgconfig
+          
+          ./configure --prefix=/usr/local \
             --enable-static --disable-shared \
-            --with-extra-includes=/usr/local/leptonica-static/include \
-            --with-extra-libraries=/usr/local/leptonica-static/lib
-          make -j$(nproc) && make install
+            --disable-openmp \
+            CXXFLAGS="-static" \
+            LDFLAGS="-static -static-libstdc++"
+
+          make -j$(nproc)
+          make install
+
+      - name: Verify Static Binary
+        run: |
+          # 验证是否真的是静态文件
+          file /usr/local/bin/tesseract
+          # 应该输出 "statically linked"
+          /usr/local/bin/tesseract --version
 
       - name: Package result
         run: |
-          tar czvf tesseract-static.tar.gz -C /usr/local/tesseract-static .
+          mkdir output
+          cp /usr/local/bin/tesseract output/
+          # 复制训练数据（可选，或者让用户自己下载）
+          # cp -r /usr/local/share/tessdata output/
+          tar czvf tesseract-static-alpine.tar.gz -C output .
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v4 # 建议升级到 v4
         with:
-          name: tesseract-static
-          path: tesseract-static.tar.gz
+          name: tesseract-static-alpine
+          path: tesseract-static-alpine.tar.gz
