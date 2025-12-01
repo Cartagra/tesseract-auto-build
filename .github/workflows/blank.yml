@@ -1,0 +1,52 @@
+name: Build Tesseract Static
+
+# 只允许手动触发
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4   # 最新 checkout action
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential autoconf automake libtool pkg-config musl-tools wget tar
+
+      - name: Download Leptonica 1.86.0
+        run: |
+          wget https://github.com/DanBloomberg/leptonica/releases/download/1.86.0/leptonica-1.86.0.tar.gz
+          tar xzvf leptonica-1.86.0.tar.gz
+
+      - name: Build Leptonica (static)
+        run: |
+          cd leptonica-1.86.0
+          CC=musl-gcc ./configure --prefix=/usr/local/leptonica-static --enable-static --disable-shared
+          make -j$(nproc) && make install
+
+      - name: Download Tesseract 5.5.1
+        run: |
+          wget https://github.com/tesseract-ocr/tesseract/archive/refs/tags/5.5.1.tar.gz -O tesseract-5.5.1.tar.gz
+          tar xzvf tesseract-5.5.1.tar.gz
+
+      - name: Build Tesseract (static)
+        run: |
+          cd tesseract-5.5.1
+          CC=musl-gcc ./configure --prefix=/usr/local/tesseract-static \
+            --enable-static --disable-shared \
+            --with-extra-includes=/usr/local/leptonica-static/include \
+            --with-extra-libraries=/usr/local/leptonica-static/lib
+          make -j$(nproc) && make install
+
+      - name: Package result
+        run: |
+          tar czvf tesseract-static.tar.gz -C /usr/local/tesseract-static .
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: tesseract-static
+          path: tesseract-static.tar.gz
